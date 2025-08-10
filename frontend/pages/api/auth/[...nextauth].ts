@@ -1,5 +1,8 @@
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import prisma from "@/lib/prisma";
+import { ensureInWelcomeGroup } from "@/lib/mailerLite";
 
 if (process.env.NODE_ENV === "development") {
   // Basic env presence check for easier debugging in dev
@@ -18,6 +21,7 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   ],
+  adapter: PrismaAdapter(prisma),
   pages: {
     signIn: "/auth/signin",
   },
@@ -27,15 +31,45 @@ export const authOptions: NextAuthOptions = {
   // Explicitly set secret + enable debug logs in dev
   secret: process.env.NEXTAUTH_SECRET,
   debug: process.env.NODE_ENV === "development",
-  logger: {
-    error(code, metadata) {
-      console.error("[NextAuth][error]", code, metadata);
+  events: {
+    async createUser({ user }) {
+      try {
+        if (user.email) {
+          await ensureInWelcomeGroup({
+            email: user.email,
+            name: user.name ?? undefined,
+          });
+        }
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { welcomedAt: new Date() },
+        });
+      } catch (err) {
+        console.error("[NextAuth][events.createUser] error", err);
+      }
     },
-    warn(code, metadata) {
-      console.warn("[NextAuth][warn]", code, metadata);
-    },
-    debug(code, metadata) {
-      console.log("[NextAuth][debug]", code, metadata);
+  },
+  callbacks: {
+    async signIn({ user }) {
+      try {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { welcomedAt: true, email: true, name: true },
+        });
+        if (dbUser && !dbUser.welcomedAt && dbUser.email) {
+          await ensureInWelcomeGroup({
+            email: dbUser.email,
+            name: dbUser.name ?? undefined,
+          });
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { welcomedAt: new Date() },
+          });
+        }
+      } catch (err) {
+        console.error("[NextAuth][callbacks.signIn] error", err);
+      }
+      return true;
     },
   },
 };
