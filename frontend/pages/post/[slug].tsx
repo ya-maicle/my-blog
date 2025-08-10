@@ -54,7 +54,7 @@ const ptComponents = {
             loop={isBackground}
             muted={isBackground}
             playsInline
-            themeProps={isBackground ? { controls: "none" } : undefined}
+            noControls={isBackground}
             style={{ objectFit: "cover", ...(isBackground ? { width: "100%" } : {}) } as any}
           />
         </div>
@@ -78,7 +78,7 @@ const ptComponents = {
             loop={isBackground}
             muted={isBackground}
             playsInline
-            themeProps={isBackground ? { controls: "none" } : undefined}
+            noControls={isBackground}
             style={{ objectFit: "cover", ...(isBackground ? { width: "100%" } : {}) } as any}
           />
         </div>
@@ -230,7 +230,7 @@ const Post = ({ post }: any) => {
             loop={topBackground}
             muted={topBackground}
             playsInline
-            themeProps={topBackground ? { controls: "none" } : undefined}
+            noControls={topBackground}
             style={{ objectFit: "cover" } as any}
           />
         );
@@ -267,27 +267,21 @@ const query = groq`*[_type == "post" && slug.current == $slug][0]{
     "status": video.asset->status,
     "background": coalesce(videoBackground, false)
   },
-    body[]{
-      ...,
-      _type == "mux.video" => {
-        "asset": asset->{
-          playbackId,
-          assetId,
-          filename,
-          status
-        },
-        "background": coalesce(background, false)
-      },
-      _type == "muxVideoBlock" => {
-        "muxVideo": muxVideo.asset->{
-          playbackId,
-          assetId,
-          filename,
-          status
-        },
-        "background": coalesce(background, false)
-      }
-    }
+  body[]{
+    ...,
+    "asset": select(_type == "mux.video" => asset->{
+      playbackId,
+      assetId,
+      filename,
+      status
+    }),
+    "muxVideo": select(_type == "muxVideoBlock" => muxVideo.asset->{
+      playbackId,
+      assetId,
+      filename,
+      status
+    }),
+    "background": select(_type == "muxVideoBlock" => coalesce(background, false))
   }
 }`;
 
