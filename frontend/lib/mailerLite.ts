@@ -30,11 +30,15 @@ function getHeaders() {
   } as const;
 }
 
-async function upsertSubscriber(email: string, name?: string | null) {
+async function upsertSubscriber(email: string, name?: string | null, groupId?: string) {
   const body: Record<string, unknown> = { email };
   if (name) {
     // "fields" can include arbitrary fields you have defined in MailerLite
     body.fields = { name };
+  }
+  if (groupId) {
+    // Add subscriber to group in the same upsert call (non-destructive)
+    body.groups = [groupId];
   }
 
   const res = await fetch(`${API_BASE}/subscribers`, {
@@ -43,8 +47,12 @@ async function upsertSubscriber(email: string, name?: string | null) {
     body: JSON.stringify(body),
   });
 
-  // 200/201/202 = ok; 409 may indicate existing depending on API behavior
-  if (!res.ok && res.status !== 409) {
+  if (process.env.NODE_ENV === "development") {
+    console.log("[MailerLite] upsertSubscriber", { status: res.status });
+  }
+
+  // 200/201/202 = ok; 409/422 may indicate existing depending on API behavior
+  if (!res.ok && res.status !== 409 && res.status !== 422) {
     const text = await res.text().catch(() => "");
     throw new Error(
       `[MailerLite] Upsert subscriber failed (${res.status}): ${text}`
@@ -52,21 +60,6 @@ async function upsertSubscriber(email: string, name?: string | null) {
   }
 }
 
-async function addSubscriberToGroup(email: string, groupId: string) {
-  const res = await fetch(`${API_BASE}/groups/${groupId}/subscribers`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({ email }),
-  });
-
-  // If already in group, some APIs return 409/422; treat as non-fatal.
-  if (!res.ok && res.status !== 409 && res.status !== 422) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `[MailerLite] Add to group failed (${res.status}): ${text}`
-    );
-  }
-}
 
 export async function ensureInWelcomeGroup({ email, name }: EnsureArgs) {
   const groupId = process.env.MAILERLITE_WELCOME_GROUP_ID;
@@ -86,14 +79,13 @@ export async function ensureInWelcomeGroup({ email, name }: EnsureArgs) {
     return;
   }
 
-  try {
-    await upsertSubscriber(email, name ?? undefined);
-    await addSubscriberToGroup(email, groupId);
-    if (process.env.NODE_ENV === "development") {
-      console.log("[MailerLite] Ensured subscriber is in Welcome group:", email);
-    }
-  } catch (err) {
-    // Never throw to auth flow; just log for observability.
-    console.error("[MailerLite] ensureInWelcomeGroup error:", err);
+  if (process.env.NODE_ENV === "development") {
+    console.log("[MailerLite] ensureInWelcomeGroup start", { email, groupId, apiBase: API_BASE });
+  }
+  // Let errors bubble so callers can decide whether to mark welcomedAt.
+  await upsertSubscriber(email, name ?? undefined, groupId);
+
+  if (process.env.NODE_ENV === "development") {
+    console.log("[MailerLite] Ensured subscriber is in Welcome group:", email);
   }
 }

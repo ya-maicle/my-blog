@@ -34,6 +34,9 @@ export const authOptions: NextAuthOptions = {
   events: {
     async createUser({ user }) {
       try {
+        if (process.env.NODE_ENV === "development") {
+          console.log("[NextAuth][events.createUser] ensure for", user.email);
+        }
         if (user.email) {
           await ensureInWelcomeGroup({
             email: user.email,
@@ -52,17 +55,37 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async signIn({ user }) {
       try {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { welcomedAt: true, email: true, name: true },
-        });
-        if (dbUser && !dbUser.welcomedAt && dbUser.email) {
-          await ensureInWelcomeGroup({
-            email: dbUser.email,
-            name: dbUser.name ?? undefined,
-          });
-          await prisma.user.update({
+        // Make MailerLite call first using the best email we have,
+        // so a failed DB lookup doesn't skip the subscription.
+        const primaryEmail = user.email ?? undefined;
+        const primaryName = user.name ?? undefined;
+
+        if (process.env.NODE_ENV === "development") {
+          console.log("[NextAuth][callbacks.signIn] ensure for", primaryEmail);
+        }
+
+        if (primaryEmail) {
+          await ensureInWelcomeGroup({ email: primaryEmail, name: primaryName });
+        }
+
+        // Safely fetch db user: try by id if present, else by email.
+        let dbUser: { welcomedAt: Date | null; email: string | null } | null = null;
+        if (user.id) {
+          dbUser = await prisma.user.findUnique({
             where: { id: user.id },
+            select: { welcomedAt: true, email: true },
+          });
+        } else if (primaryEmail) {
+          dbUser = await prisma.user.findUnique({
+            where: { email: primaryEmail },
+            select: { welcomedAt: true, email: true },
+          });
+        }
+
+        // Only stamp welcomedAt after successful ensure.
+        if (dbUser && !dbUser.welcomedAt && dbUser.email) {
+          await prisma.user.update({
+            where: { email: dbUser.email },
             data: { welcomedAt: new Date() },
           });
         }
